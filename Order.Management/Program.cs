@@ -1,5 +1,13 @@
-﻿using System;
+﻿
+
+using Microsoft.Extensions.Configuration;
+using Order.Management.Order;
+using Order.Management.Order.Interface;
+using Order.Management.Shape;
+using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 
 namespace Order.Management
 {
@@ -8,117 +16,88 @@ namespace Order.Management
         // Main entry
         static void Main(string[] args)
         {
-            var (customerName, address, dueDate) = CustomerInfoInput();
 
-            var orderedShapes = CustomerOrderInput();
+            //var builder = new ConfigurationBuilder()
+            //     .SetBasePath(Directory.GetCurrentDirectory())
+            //     .AddJsonFile("appsettings.json", optional: false);
 
-            InvoiceReport(customerName, address, dueDate, orderedShapes);
+            //IConfiguration config = builder.Build();
 
-            CuttingListReport(customerName, address, dueDate, orderedShapes);
+            var (orderNumber, shapes, additionalCharges,types) = SetupInitalValues();
 
-            PaintingReport(customerName, address, dueDate, orderedShapes);
-        }
-        
-        // Order Circle Input
-        public static Circle OrderCirclesInput()
-        {
-            Console.Write("\nPlease input the number of Red Circle: ");
-            int redCircle = Convert.ToInt32(userInput());
-            Console.Write("Please input the number of Blue Circle: ");
-            int blueCircle = Convert.ToInt32(userInput());
-            Console.Write("Please input the number of Yellow Circle: ");
-            int yellowCircle = Convert.ToInt32(userInput());
+            var customer = GetCustomerInfoInput();
 
-            Circle circle = new Circle(redCircle, blueCircle, yellowCircle);
-            return circle;
-        }
-        
-        // Order Squares Input
-        public static Square OrderSquaresInput()
-        {
-            Console.Write("\nPlease input the number of Red Squares: ");
-            int redSquare = Convert.ToInt32(userInput());
-            Console.Write("Please input the number of Blue Squares: ");
-            int blueSquare = Convert.ToInt32(userInput());
-            Console.Write("Please input the number of Yellow Squares: ");
-            int yellowSquare = Convert.ToInt32(userInput());
+            var order = GetCustomerOrderInput(orderNumber, customer);
+            order.AdditionalCharges = additionalCharges;
 
-            Square square = new Square(redSquare, blueSquare, yellowSquare);
-            return square;
-        }
-
-        // Order Triangles Input
-        public static Triangle OrderTrianglesInput()
-        {
-            Console.Write("\nPlease input the number of Red Triangles: ");
-            int redTriangle = Convert.ToInt32(userInput());
-            Console.Write("Please input the number of Blue Triangles: ");
-            int blueTriangle = Convert.ToInt32(userInput());
-            Console.Write("Please input the number of Yellow Triangles: ");
-            int yellowTriangle = Convert.ToInt32(userInput());
-
-            Triangle triangle = new Triangle(redTriangle, blueTriangle, yellowTriangle);
-            return triangle;
-        }
-
-        // User Console Input
-        public static string userInput()
-        {
-            string input = Console.ReadLine();
-            while (string.IsNullOrEmpty(input))
+            var reports = new List<IOrderReportService>();
+            foreach (var reportType in types)
             {
-                Console.WriteLine("please enter valid details");
-                input = Console.ReadLine();
-
+                var report = (IOrderReportService) Activator.CreateInstance(reportType, order, shapes);
+                reports.Add(report);
             }
-            return input;
+            reports.OrderBy(x => x.DisplayOrder).ToList().ForEach(x => x.GenerateReport());
         }
 
-        // Generate Painting Report 
-        private static void PaintingReport(string customerName, string address, string dueDate, List<Shape> orderedShapes)
+        private static Tuple<long, List<Shape.Shape>, Dictionary<Color, decimal>, List<Type>> SetupInitalValues()
         {
-            PaintingReport paintingReport = new PaintingReport(customerName, address, dueDate, orderedShapes);
-            paintingReport.GenerateReport();
+            var shapes = new List<Shape.Shape>()
+            {
+                {new Square(1)},
+                {new Triangle(2) },
+                {new Circle(3) }
+            };
+
+            var reportTypes = AppDomain.CurrentDomain.GetAssemblies()
+               .SelectMany(s => s.GetTypes())
+               .Where(p => typeof(IOrderReportService).IsAssignableFrom(p) && !p.IsAbstract && !p.IsInterface)
+               .ToList();
+
+            return Tuple.Create(1L, shapes, new Dictionary<Color, decimal>() { { Color.Red, 1 } }, reportTypes);
         }
 
-        // Generate Painting Report 
-        private static void CuttingListReport(string customerName, string address, string dueDate, List<Shape> orderedShapes)
+        // Order Shapes Input
+        private static Dictionary<Shape.Shape,Tuple<Color,int>> GetOrderShapeInput(string shapeName)
         {
-            CuttingListReport cuttingListReport = new CuttingListReport(customerName, address, dueDate, orderedShapes);
-            cuttingListReport.GenerateReport();
-        }
+            var shapesOrdered = new Dictionary<Shape.Shape,Tuple<Color,int>>();
+            var shapePrice =  (int) Enum.Parse(typeof(ShapeType), shapeName);
+            foreach (var colorName in Enum.GetNames(typeof(Color)))
+            {
+                var color = (Color)Enum.Parse(typeof(Color), colorName);
+                var shape = (Shape.Shape) Activator.CreateInstance(Type.GetType($"Order.Management.Shape.{shapeName}"), (decimal)shapePrice);
+              
+                Console.Write($"\nPlease input the number of {color} {shape.Type}: ");
+                shapesOrdered.Add(shape, Tuple.Create(color, Utility.GetUserInputNumber()));
+            }
 
-        // Generate Invoice Report 
-        private static void InvoiceReport(string customerName, string address, string dueDate, List<Shape> orderedShapes)
-        {
-            InvoiceReport invoiceReport = new InvoiceReport(customerName, address, dueDate, orderedShapes);
-            invoiceReport.GenerateReport();
+            return shapesOrdered;
         }
 
         // Get customer Info
-        private static (string customerName, string address, string dueDate) CustomerInfoInput()
+        private static Customer GetCustomerInfoInput()
         {
             Console.Write("Please input your Name: ");
-            string customerName = userInput();
+            string customerName = Utility.GetUserInputString();
             Console.Write("Please input your Address: ");
-            string address = userInput();
-            Console.Write("Please input your Due Date: ");
-            string dueDate = userInput();
-            return (customerName, address, dueDate);
+            string address = Utility.GetUserInputString();
+
+            return new Customer(customerName, address);
         }
 
         // Get order input
-        private static List<Shape> CustomerOrderInput()
+        private static Order.Order GetCustomerOrderInput(long orderNumber, Customer customer)
         {
-            Square square = OrderSquaresInput();
-            Triangle triangle = OrderTrianglesInput();
-            Circle circle = OrderCirclesInput();
+            Console.Write("Please input your Due Date: ");
+            var dueDate = Utility.GetUserInputDate();
 
-            var orderedShapes = new List<Shape>();
-            orderedShapes.Add(square);
-            orderedShapes.Add(triangle);
-            orderedShapes.Add(circle);
-            return orderedShapes;
+            var order = new Order.Order(orderNumber, customer, dueDate);
+
+            foreach (var shapeName in Shape.Shape.GetShapes())
+            {
+              order.AddShapes(GetOrderShapeInput(shapeName));
+            }
+            return order;
         }
+    
     }
 }
